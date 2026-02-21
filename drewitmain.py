@@ -1,9 +1,18 @@
+import io
 import tkinter as tk
-
-
+from tkinter import colorchooser
+from turtle import color
+from PIL import Image, ImageGrab, ImageTk
+canvas_image_ref = None
+x = 0
+y = 0
 root = tk.Tk()
 root.title("Mini Paint (Pencil + Eraser)")
 
+def choose_pencil_color():
+    pencil_color = colorchooser.askcolor(title="Choose Pencil Color")
+    if pencil_color[1] is not None:
+        PENCIL_COLOR_BUTTON.config(bg=pencil_color[1])
 
 tool = tk.IntVar(value=1) 
 
@@ -34,30 +43,40 @@ canvas.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
 tk.Radiobutton(left_panel, text="Pencil", variable=tool, value=1).pack(anchor=tk.W, padx=8, pady=4)
 tk.Radiobutton(left_panel, text="Eraser", variable=tool, value=2).pack(anchor=tk.W, padx=8, pady=4)
+tk.Radiobutton(left_panel, text="Bucket", variable=tool, value=3).pack(anchor=tk.W, padx=8, pady=4)
 
 
-PENCIL_COLOR = "black"
-ERASER_COLOR = "white"  
-PENCIL_SIZE = 2
-ERASER_SIZE = 14
+PENCIL_COLOR_BUTTON = tk.Button(left_panel, text="Choose Color", command=choose_pencil_color)
+PENCIL_COLOR_BUTTON.pack(padx=8, pady=4)
+
+ERASER_COLOR = "white"
+pencil_size_scale = tk.Scale(left_panel, from_=1, to=20, label="Pencil Size", orient=tk.HORIZONTAL)
+pencil_size_scale.set(3)
+pencil_size_scale.pack(padx=8, pady=4)
+
+eraser_size_scale = tk.Scale(left_panel, from_=1, to=50, label="Eraser Size", orient=tk.HORIZONTAL)
+eraser_size_scale.set(14)
+eraser_size_scale.pack(padx=8, pady=4)
+
 
 last_x = None
 last_y = None
 
 
 def current_style():
+    if tool.get() == 2:  # eraser
+        return canvas["bg"], eraser_size_scale.get()
+    return PENCIL_COLOR_BUTTON.cget("bg"), pencil_size_scale.get()
 
-    if tool.get() == 2:  # Eraser
-        return ERASER_COLOR, ERASER_SIZE
-    else:               # Pencil (default)
-        return PENCIL_COLOR, PENCIL_SIZE
 
 
 def on_mouse_down(event):
 
     global last_x, last_y
+    if tool.get() == 3:
+        bucket_fill(event.x, event.y)
+        return
     last_x, last_y = event.x, event.y
-
 def on_mouse_drag(event):
 
     global last_x, last_y
@@ -68,6 +87,8 @@ def on_mouse_drag(event):
         return
 
     color, size = current_style()
+
+    print("DEBUG color=", repr(color), type(color), " size=", size, type(size))
 
 
     canvas.create_line(
@@ -80,6 +101,78 @@ def on_mouse_drag(event):
 
 
     last_x, last_y = event.x, event.y
+
+
+from PIL import Image, ImageDraw, ImageTk
+import io
+
+# Keep a reference so the image isn't garbage collected
+canvas_image_ref = None
+
+def get_canvas_image():
+    canvas.update()
+    x = canvas.winfo_rootx()
+    y = canvas.winfo_rooty()
+    w = canvas.winfo_width()
+    h = canvas.winfo_height()
+    return ImageGrab.grab(bbox=(x, y, x + w, y + h)).convert("RGB")
+
+def pil_flood_fill(image, x, y, replacement_color):
+    """BFS flood fill on a PIL image."""
+    width, height = image.size
+    target_color = image.getpixel((x, y))
+    
+    # Convert hex color like "#ff0000" to RGB tuple
+    if isinstance(replacement_color, str):
+        replacement_color = tuple(int(replacement_color[i:i+2], 16) for i in (1, 3, 5))
+    
+    if target_color == replacement_color:
+        return image
+
+    pixels = image.load()
+    queue = [(x, y)]
+    visited = set()
+    
+    while queue:
+        cx, cy = queue.pop()
+        if (cx, cy) in visited:
+            continue
+        if cx < 0 or cy < 0 or cx >= width or cy >= height:
+            continue
+        if pixels[cx, cy] != target_color:
+            continue
+        
+        visited.add((cx, cy))
+        pixels[cx, cy] = replacement_color
+        
+        queue.append((cx + 1, cy))
+        queue.append((cx - 1, cy))
+        queue.append((cx, cy + 1))
+        queue.append((cx, cy - 1))
+    
+    return image
+
+def bucket_fill(x, y):
+    global canvas_image_ref
+    
+    color = PENCIL_COLOR_BUTTON.cget("bg")
+    
+    # Get current canvas as image
+    img = get_canvas_image()
+    
+    # Clamp coords to image bounds (canvas coords should match but just in case)
+    x = max(0, min(x, img.width - 1))
+    y = max(0, min(y, img.height - 1))
+    
+    # Run flood fill
+    filled = pil_flood_fill(img, x, y, color)
+    
+    # Convert back to PhotoImage and draw on canvas
+    photo = ImageTk.PhotoImage(filled)
+    canvas_image_ref = photo  # Prevent garbage collection
+    canvas.delete("all")
+    canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+
 
 def on_mouse_up(event):
     """
